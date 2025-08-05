@@ -479,4 +479,76 @@
   )
 )
 
+;; Create a new governance proposal
+(define-public (create-proposal
+  (description-hash (string-ascii 64))
+  (parameter-key (string-ascii 32))
+  (proposed-value uint)
+)
+  (let (
+    (proposer tx-sender)
+    (current-id (var-get current-proposal-id))
+    (node-info (unwrap! (map-get? IndexingNodes { node-address: proposer }) ERR_INVALID_NODE))
+  )
+    ;; Verify proposer has sufficient reputation
+    (asserts! (>= (get reputation-score node-info) u5000) ERR_INSUFFICIENT_REPUTATION)
+    
+    ;; Create proposal
+    (map-set Proposals
+      { proposal-id: (+ current-id u1) }
+      {
+        proposer: proposer,
+        description-hash: description-hash,
+        parameter-key: parameter-key,
+        proposed-value: proposed-value,
+        start-block: stacks-block-height,
+        end-block: (+ stacks-block-height PROPOSAL_VOTING_PERIOD),
+        votes-for: u0,
+        votes-against: u0,
+        executed: false
+      }
+    )
+    
+    ;; Update proposal counter
+    (var-set current-proposal-id (+ current-id u1))
+    
+    (ok (+ current-id u1))
+  )
+)
+
+;; Execute a passed proposal
+(define-public (execute-proposal
+  (proposal-id uint)
+)
+  (let (
+    (proposal (unwrap! (map-get? Proposals { proposal-id: proposal-id }) ERR_INVALID_QUERY))
+  )
+    ;; Verify proposal voting period has ended
+    (asserts! (> stacks-block-height (get end-block proposal)) ERR_PROPOSAL_NOT_ACTIVE)
+    
+    ;; Verify proposal hasn't been executed
+    (asserts! (not (get executed proposal)) ERR_PROPOSAL_NOT_ACTIVE)
+    
+    ;; Verify proposal passed
+    (asserts! (and
+              (> (get votes-for proposal) (get votes-against proposal))
+              (>= (get votes-for proposal) MIN_VOTES_FOR_PROPOSAL))
+             ERR_INSUFFICIENT_REPUTATION)
+    
+    ;; Update network parameter
+    (map-set NetworkParameters
+      { param-key: (get parameter-key proposal) }
+      { value: (get proposed-value proposal) }
+    )
+    
+    ;; Mark proposal as executed
+    (map-set Proposals
+      { proposal-id: proposal-id }
+      (merge proposal { executed: true })
+    )
+    
+    (ok true)
+  )
+)
+
 
